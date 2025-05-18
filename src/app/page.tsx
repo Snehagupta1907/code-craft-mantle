@@ -25,6 +25,7 @@ import React from 'react';
 export default function Home() {
   // State for chat
   const [messages, setMessages] = useState<Message[]>([]);
+  const [isTodoApp,setIsTodoApp] = useState(false);
 
   // State for files
   const [fileStructure, setFileStructure] = useState<FileNode[]>([]);
@@ -462,6 +463,7 @@ export default function Home() {
         <main className="flex-1 overflow-hidden">
           <Chat
             messages={messages}
+            setIsTodoApp={setIsTodoApp}
             onSendMessage={handleSendMessage}
             isInitialView={true}
             isLoading={isLoading}
@@ -571,7 +573,7 @@ export default function Home() {
                       {/* <CodePreview files={previewFiles} /> */}
                       <div className="w-full h-screen border-4">
                         <iframe
-                          src="https://word-puzzle-lemon.vercel.app/"
+                          src={isTodoApp ? "https://dapp-forge-u9hr.vercel.app/" : "https://dapp-forge.vercel.app/"}
                           className="w-full h-full border-none"
                           height={"80%"}
                         />

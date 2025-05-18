@@ -5,11 +5,13 @@ import React from 'react';
 
 export default function Chat({ 
   messages, 
+  setIsTodoApp,
   onSendMessage,
   isInitialView = false,
   isLoading = false
 }: {
   messages: { id?: number; role: string; content: string; }[];
+  setIsTodoApp: React.Dispatch<React.SetStateAction<boolean>>;
   onSendMessage: (message: string) => void;
   isInitialView: boolean;
   isLoading?: boolean;
@@ -19,6 +21,11 @@ export default function Chat({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (input.trim() === '' || isLoading) return;
+  
+    if (input.toLowerCase().includes('todo') || input.toLowerCase().includes('to-do')) {
+      setIsTodoApp(true);
+    }
+  
     onSendMessage(input);
     setInput('');
   };
