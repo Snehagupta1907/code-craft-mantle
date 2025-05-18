@@ -19,8 +19,7 @@
 # misc
 .DS_Store
 *.pem
-.env
-pnpm-lock.yaml
+
 # debug
 npm-debug.log*
 yarn-debug.log*
