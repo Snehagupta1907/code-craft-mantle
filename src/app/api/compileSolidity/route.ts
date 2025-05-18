@@ -2,17 +2,21 @@
 import { NextResponse } from 'next/server';
 import solc from 'solc';
 
-const compileSolidity = (source: string) => {
+interface FileContent {
+  content: string;
+  path: string;
+}
 
-  const inputFileName = 'input.sol';
+const compileSolidity = (files: FileContent[]) => {
+  // Create a mapping of file paths to their contents
+  const sources: Record<string, { content: string }> = {};
+  files.forEach(file => {
+    sources[file.path] = { content: file.content };
+  });
 
   const input = {
     language: 'Solidity',
-    sources: {
-      [inputFileName]: {
-        content: source,
-      },
-    },
+    sources,
     settings: {
       optimizer: {
         enabled: true,
@@ -26,9 +30,7 @@ const compileSolidity = (source: string) => {
     }
   };
 
-
   const compiled = JSON.parse(solc.compile(JSON.stringify(input)));
-
 
   if (compiled.errors) {
     const hasErrors = compiled.errors.some((error: any) => error.severity === 'error');
@@ -41,47 +43,36 @@ const compileSolidity = (source: string) => {
     }
   }
 
-
-  const contracts = compiled.contracts[inputFileName];
-  if (!contracts) {
-    throw new Error('No contracts found in the compiled output.');
-  }
-
-
-  const result: { 
-    bytecode: string, 
-    contractName: string, 
-    abi: any, 
-    allContracts: Record<string, { abi: any, bytecode: string }> 
+  const result: {
+    contracts: Record<string, {
+      bytecode: string;
+      abi: any;
+      contractName: string;
+    }>;
   } = {
-    bytecode: '',
-    contractName: '',
-    abi: null,
-    allContracts: {}
+    contracts: {}
   };
 
-  // Extract all contracts and their ABIs
-  for (const contractName in contracts) {
-    const contract = contracts[contractName];
-    const bytecode = contract.evm?.bytecode?.object;
-    const abi = contract.abi;
-    
-    result.allContracts[contractName] = {
-      abi,
-      bytecode: bytecode || ''
-    };
+  // Process all compiled contracts
+  for (const sourcePath in compiled.contracts) {
+    const contracts = compiled.contracts[sourcePath];
+    for (const contractName in contracts) {
+      const contract = contracts[contractName];
+      const bytecode = contract.evm?.bytecode?.object;
+      const abi = contract.abi;
 
-
-    if (bytecode && !result.bytecode) {
-      result.bytecode = bytecode;
-      result.contractName = contractName;
-      result.abi = abi;
+      if (bytecode) {
+        result.contracts[contractName] = {
+          bytecode,
+          abi,
+          contractName
+        };
+      }
     }
   }
 
-
-  if (!result.bytecode) {
-    throw new Error('Bytecode not found for any contract.');
+  if (Object.keys(result.contracts).length === 0) {
+    throw new Error('No contracts found in the compiled output.');
   }
 
   return result;
@@ -89,26 +80,19 @@ const compileSolidity = (source: string) => {
 
 export async function POST(req: Request) {
   try {
-    const { sourceCode }: { sourceCode: string } = await req.json(); // Solidity source code
+    const { files }: { files: FileContent[] } = await req.json();
 
+    console.log('Received Solidity files:', files.map(f => f.path).join(', '));
 
-    console.log('Received Solidity source code:', 
-      sourceCode.length > 200 ? sourceCode.substring(0, 200) + '...' : sourceCode);
+    const compilationResult = compileSolidity(files);
 
-
-    const compilationResult = compileSolidity(sourceCode);
-
- 
     return NextResponse.json({
-      bytecode: compilationResult.bytecode,
-      contractName: compilationResult.contractName,
-      abi: compilationResult.abi,
-      contracts: compilationResult.allContracts
+      contracts: compilationResult.contracts
     });
   } catch (error: unknown) {
     console.error('Error in Solidity compile API:', error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'An error occurred during compilation' }, 
+      { error: error instanceof Error ? error.message : 'An error occurred during compilation' },
       { status: 500 }
     );
   }

@@ -19,8 +19,8 @@ import { ConnectButton } from "../components/ConnectWallet";
 import { useAccount } from "wagmi";
 import { ethers } from "ethers";
 
-import { type FileNode, type Message } from "../types/interface";
-import React from "react";
+import { type FileNode,type Message, type ModificationResponse, type NewProjectResponse, type ContractData } from '../types/interface';
+import React from 'react';
 
 export default function Home() {
   // State for chat
@@ -46,14 +46,18 @@ export default function Home() {
   const [contractAddress, setContractAddress] = useState<string | null>(null);
   const [compiling, setCompiling] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [compiledContracts, setCompiledContracts] = useState<Record<string, { bytecode: string; abi: any; contractName: string }>>({});
   const { isConnected } = useAccount();
 
-  type NormalizedFiles = Record<string, { content: string }>;
 
-  const getPreviewFiles = (
-    normalizedFiles: NormalizedFiles
-  ): Record<string, { code: string }> => {
-    const previewFiles: Record<string, { code: string }> = {};
+
+  type NormalizedFiles = Record<string, { content: string }>;
+  
+
+  type AIResponse = ModificationResponse | NewProjectResponse;
+
+ const getPreviewFiles = (normalizedFiles: NormalizedFiles): Record<string, { code: string }> => {
+  const previewFiles: Record<string, { code: string }> = {};
 
     Object.entries(normalizedFiles).forEach(([filePath, fileData]) => {
       // Sandpack expects file paths to start with "/"
@@ -107,15 +111,23 @@ export default function Home() {
     setCompiling(true);
     setBytecode(null);
     setCompilationError(null);
-
+    setCompiledContracts({});
+    
     try {
-      const response = await fetch("/api/compileSolidity", {
-        method: "POST",
+      const solidityFiles = Object.entries(files)
+        .filter(([path]) => path.endsWith('.sol'))
+        .map(([path, file]) => ({
+          path,
+          content: file.content
+        }));
+
+      const response = await fetch('/api/compileSolidity', {
+        method: 'POST',
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          sourceCode: files[selectedFile].content,
+          files: solidityFiles,
         }),
       });
 
@@ -125,8 +137,13 @@ export default function Home() {
       if (!response.ok) {
         setCompilationError(data.error || "Failed to compile Solidity code");
       } else {
-        setBytecode(data.bytecode);
-        setAbi(data.abi);
+        setCompiledContracts(data.contracts);
+        // Set the first contract as the default for deployment
+        const firstContract = Object.values(data.contracts)[0] as ContractData;
+        if (firstContract) {
+          setBytecode(firstContract.bytecode);
+          setAbi(firstContract.abi);
+        }
       }
     } catch (error: unknown) {
       setCompilationError(
@@ -145,9 +162,59 @@ export default function Home() {
       const jsonMatch = content.match(/```json\n([\s\S]*?)\n```/);
 
       if (jsonMatch && jsonMatch[1]) {
-        const projectData = JSON.parse(jsonMatch[1]);
-
-        if (projectData.fileStructure && projectData.files) {
+        const projectData = JSON.parse(jsonMatch[1]) as AIResponse;
+        
+        // Handle modifications
+        if (projectData.type === 'modification') {
+          const changes = projectData.changes;
+          
+          // Update file structure if provided
+          if (projectData.fileStructure) {
+            setFileStructure(prevStructure => {
+              // Merge new structure with existing structure
+              const newStructure = [...prevStructure];
+              
+              projectData.fileStructure?.forEach(newNode => {
+                // Check if folder already exists
+                const existingFolderIndex = newStructure.findIndex(
+                  node => node.type === 'folder' && node.name === newNode.name
+                );
+                
+                if (existingFolderIndex === -1) {
+                  // Add new folder
+                  newStructure.push(newNode);
+                } else {
+                  // Merge children if folder exists
+                  const existingFolder = newStructure[existingFolderIndex];
+                  if (existingFolder.children && newNode.children) {
+                    existingFolder.children = [
+                      ...existingFolder.children,
+                      ...newNode.children
+                    ];
+                  }
+                }
+              });
+              
+              return newStructure;
+            });
+          }
+          
+          // Update files
+          setFiles(prevFiles => {
+            const newFiles = { ...prevFiles };
+            Object.entries(changes).forEach(([filePath, change]) => {
+              if (change.type === 'update') {
+                newFiles[filePath] = { content: change.content };
+              }
+            });
+            return newFiles;
+          });
+          
+          return true;
+        }
+        
+        // Handle new project
+        if (projectData.type === 'new_project' && projectData.fileStructure && projectData.files) {
           setFileStructure(projectData.fileStructure);
           const normalizedFiles: Record<string, { content: string }> = {};
 
@@ -159,8 +226,8 @@ export default function Home() {
               normalizedFiles[filePath] = { content: fileData };
             }
             // Case 2: If file has a content property
-            else if (fileData && fileData.content) {
-              normalizedFiles[filePath] = fileData;
+            else if (fileData && typeof fileData === 'object' && 'content' in fileData) {
+              normalizedFiles[filePath] = fileData as { content: string };
             }
             // Case 3: If file is an object with key-value pairs
             else if (typeof fileData === "object") {
@@ -207,19 +274,19 @@ export default function Home() {
 
   // Handle sending messages
   const handleSendMessage = async (content: string) => {
-    const newMessage = { id: Date.now(), role: "user", content };
-
-    setMessages((prev) => [...prev, newMessage]);
-
+    const newMessage = { id: Date.now(), role: 'user', content };
+    
+    setMessages(prev => [...prev, newMessage]);
+    
     if (!hasStarted) {
       setHasStarted(true);
     }
-
+    
     setIsLoading(true);
 
     try {
-      const response = await fetch("/api/chat", {
-        method: "POST",
+      const response = await fetch('/api/chat', {
+        method: 'POST',
         headers: {
           "Content-Type": "application/json",
         },
@@ -231,6 +298,9 @@ export default function Home() {
             })),
             { role: "user", content },
           ],
+          currentState: {
+            files
+          }
         }),
       });
 
@@ -244,11 +314,11 @@ export default function Home() {
         role: "assistant",
         content: data.message.content,
       };
-
-      setMessages((prev) => [...prev, aiMessage]);
-
+      
+      setMessages(prev => [...prev, aiMessage]);
+      
       const parsedSuccessfully = parseAIResponse(data.message.content);
-
+      
       if (!parsedSuccessfully && messages.length === 0) {
         const structureResponse = await fetch("/api/chat", {
           method: "POST",
@@ -269,6 +339,9 @@ export default function Home() {
                   'Please provide the project file structure and code as JSON. Include a "fileStructure" array and a "files" object with file contents.',
               },
             ],
+            currentState: {
+              files
+            }
           }),
         });
 
@@ -279,9 +352,9 @@ export default function Home() {
             role: "assistant",
             content: structureData.message.content,
           };
-
-          setMessages((prev) => [...prev, structureMessage]);
-
+          
+          setMessages(prev => [...prev, structureMessage]);
+          
           parseAIResponse(structureData.message.content);
         }
       }
@@ -516,7 +589,7 @@ export default function Home() {
                     </div>
                   )}
                 </div>
-                {(compilationError || bytecode) && (
+                {(compilationError || Object.keys(compiledContracts).length > 0) && (
                   <div className="p-3 bg-gray-900 text-gray-300 border-t border-gray-700 max-h-40 overflow-auto">
                     {compilationError ? (
                       <div className="text-red-400">
@@ -525,21 +598,26 @@ export default function Home() {
                           {compilationError}
                         </pre>
                       </div>
-                    ) : bytecode ? (
+                    ) : (
                       <div className="text-green-400">
                         <h3 className="font-bold">Compilation Successful</h3>
+                        <div className="mt-2">
+                          <h4 className="font-bold">Compiled Contracts:</h4>
+                          {Object.entries(compiledContracts).map(([name, contract]) => (
+                            <div key={name} className="mt-1">
+                              <span className="font-bold">{name}: </span>
+                              <span className="text-white">✓ Compiled</span>
+                            </div>
+                          ))}
+                        </div>
                         {contractAddress && (
                           <div className="mt-2">
-                            <span className="font-bold">
-                              Contract Address:{" "}
-                            </span>
-                            <span className="text-white">
-                              {contractAddress}
-                            </span>
+                            <span className="font-bold">Deployed Contract Address: </span>
+                            <span className="text-white">{contractAddress}</span>
                           </div>
                         )}
                       </div>
-                    ) : null}
+                    )}
                   </div>
                 )}
               </div>
